@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>7セグメントOCR プロトタイプ</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      text-align: center;
+      background: #1e1e24;
+      color: #fff;
+      margin: 0;
+      padding: 10px;
+    }
+    .container {
+      position: relative;
+      display: inline-block;
+      max-width: 100%;
+    }
+    video, canvas {
+      border-radius: 8px;
+      max-width: 100%;
+      height: auto;
+    }
+    /* 画面上に重ねる検出枠（赤枠） */
+    .roi-box {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 120px;
+      height: 200px;
+      transform: translate(-50%, -50%);
+      border: 3px solid #ff4757;
+      box-shadow: 0 0 10px rgba(255, 71, 87, 0.5);
+      pointer-events: none;
+    }
+    .result {
+      font-size: 2.5rem;
+      font-weight: bold;
+      color: #2ed573;
+      margin-top: 15px;
+    }
+    .sub-canvas {
+      margin-top: 10px;
+      border: 1px solid #555;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>7セグメントOCR プロトタイプ</h2>
+  
+  <div class="container">
+    <video id="video" autoplay playsinline muted></video>
+    <!-- ユーザーに狙いを定めさせるための赤枠 -->
+    <div class="roi-box"></div>
+  </div>
+
+  <div class="result">
+    判定結果: <span id="digit-result">-</span>
+  </div>
+
+  <!-- デバッグ用：赤枠内を二値化（白黒）したリアルタイム画像 -->
+  <div>
+    <p style="font-size: 0.8rem; color: #aaa;">二値化プレビュー（デバッグ用）</p>
+    <canvas id="debug-canvas" width="120" height="200" class="sub-canvas"></canvas>
+  </div>
+
+  <!-- 非表示の作業用Canvas -->
+  <canvas id="process-canvas" style="display: none;"></canvas>
+
+  <script>
+    const video = document.getElementById('video');
+    const processCanvas = document.getElementById('process-canvas');
+    const debugCanvas = document.getElementById('debug-canvas');
+    const resultEl = document.getElementById('digit-result');
+
+    const pCtx = processCanvas.getContext('2d');
+    const dCtx = debugCanvas.getContext('2d');
+
+    // 赤枠のサイズ
+    const roiWidth = 120;
+    const roiHeight = 200;
+
+    // カメラの起動
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false
+        });
+        video.srcObject = stream;
+        video.onloadedmetadata = () => {
+          processCanvas.width = video.videoWidth;
+          processCanvas.height = video.videoHeight;
+          requestAnimationFrame(processLoop);
+        };
+      } catch (err) {
+        alert('カメラの起動に失敗しました: ' + err);
+      }
+    }
+
+    // 毎フレーム実行するメインループ
+    function processLoop() {
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        // 1. 全体フレームをCanvasに描画
+        pCtx.drawImage(video, 0, 0, processCanvas.width, processCanvas.height);
+
+        // 2. 中央の赤枠（ROI）部分を切り出し
+        const startX = (processCanvas.width - roiWidth) / 2;
+        const startY = (processCanvas.height - roiHeight) / 2;
+        const imgData = pCtx.getImageData(startX, startY, roiWidth, roiHeight);
+
+        // 3. 画像の二値化（白黒化）とセグメント判定
+        const digit = process7Segment(imgData);
+
+        // 結果の表示
+        resultEl.innerText = digit !== null ? digit : '?';
+      }
+      requestAnimationFrame(processLoop);
+    }
+
+    // 7セグメントの画像処理・判定ロジック
+    function process7Segment(imgData) {
+      const data = imgData.data;
+      const w = imgData.width;
+      const h = imgData.height;
+
+      // デバッグCanvas用ImageData
+      const debugData = dCtx.createImageData(w, h);
+
+      // A. グレースケール化 ＆ 白黒（二値化）処理
+      // 敷居値（2値化の基準値）。明るいデジタル数字（発光）を白(255)にする設定
+      const threshold = 130; 
+      const binaryMap = new Uint8Array(w * h);
+
+      for (let i = 0; i < data.length; i += 4) {
+        // 輝度の計算
+        const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
+        const isWhite = avg > threshold ? 1 : 0;
+        const idx = i / 4;
+        binaryMap[idx] = isWhite;
+
+        // デバッグ用表示画像の作成 (白黒)
+        const val = isWhite ? 255 : 0;
+        debugData.data[i] = val;     // R
+        debugData.data[i + 1] = val; // G
+        debugData.data[i + 2] = val; // B
+        debugData.data[i + 3] = 255; // A
+      }
+      dCtx.putImageData(debugData, 0, 0);
+
+      // B. 7つのエリア（セグメント A〜G）の点灯判定
+      // 各セグメントの相対位置エリア（x, y, width, height: 割合 0.0〜1.0）
+      const segments = {
+        A: { x: 0.2, y: 0.05, w: 0.6, h: 0.15 },
+        B: { x: 0.7, y: 0.15, w: 0.25, h: 0.35 },
+        C: { x: 0.7, y: 0.50, w: 0.25, h: 0.35 },
+        D: { x: 0.2, y: 0.80, w: 0.6, h: 0.15 },
+        E: { x: 0.05, y: 0.50, w: 0.25, h: 0.35 },
+        F: { x: 0.05, y: 0.15, w: 0.25, h: 0.35 },
+        G: { x: 0.2, y: 0.42, w: 0.6, h: 0.16 }
+      };
+
+      const states = {};
+      for (const [key, rect] of Object.entries(segments)) {
+        states[key] = isAreaOn(binaryMap, w, h, rect);
+      }
+
+      // C. ビットパターンを数字に変換
+      return decodeDigit(states);
+    }
+
+    // 指定領域内の「白ピクセル」の割合が閾値を超えているか判定
+    function isAreaOn(binaryMap, w, h, rect) {
+      const xStart = Math.floor(rect.x * w);
+      const yStart = Math.floor(rect.y * h);
+      const xEnd = Math.floor((rect.x + rect.w) * w);
+      const yEnd = Math.floor((rect.y + rect.h) * h);
+
+      let whiteCount = 0;
+      let totalCount = 0;
+
+      for (let y = yStart; y < yEnd; y++) {
+        for (let x = xStart; x < xEnd; x++) {
+          if (binaryMap[y * w + x] === 1) {
+            whiteCount++;
+          }
+          totalCount++;
+        }
+      }
+
+      // 領域の 25% 以上が点灯（白）していれば「ON」とみなす
+      return (whiteCount / totalCount) > 0.25;
+    }
+
+    // セグメントON/OFFの組み合わせから数字（0〜9）を判定
+    function decodeDigit(s) {
+      const patterns = {
+        '1111110': 0, // A,B,C,D,E,F
+        '0110000': 1, // B,C
+        '1101101': 2, // A,B,D,E,G
+        '1111001': 3, // A,B,C,D,G
+        '0110011': 4, // B,C,F,G
+        '1011011': 5, // A,C,D,F,G
+        '1011111': 6, // A,C,D,E,F,G
+        '1110000': 7, // A,B,C (またはA,B,C,F)
+        '1111111': 8, // 全てON
+        '1111011': 9  // A,B,C,D,F,G
+      };
+
+      // A,B,C,D,E,F,G の順で1/0の文字列を作成
+      const key = `${s.A?1:0}${s.B?1:0}${s.C?1:0}${s.D?1:0}${s.E?1:0}${s.F?1:0}${s.G?1:0}`;
+      return patterns[key] !== undefined ? patterns[key] : null;
+    }
+
+    // 開始
+    startCamera();
+  </script>
+</body>
+</html>
