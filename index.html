@@ -1,222 +1,382 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>7セグメントOCR プロトタイプ</title>
-  <style>
-    body {
-      font-family: sans-serif;
-      text-align: center;
-      background: #1e1e24;
-      color: #fff;
-      margin: 0;
-      padding: 10px;
-    }
-    .container {
-      position: relative;
-      display: inline-block;
-      max-width: 100%;
-    }
-    video, canvas {
-      border-radius: 8px;
-      max-width: 100%;
-      height: auto;
-    }
-    /* 画面上に重ねる検出枠（赤枠） */
-    .roi-box {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      width: 120px;
-      height: 200px;
-      transform: translate(-50%, -50%);
-      border: 3px solid #ff4757;
-      box-shadow: 0 0 10px rgba(255, 71, 87, 0.5);
-      pointer-events: none;
-    }
-    .result {
-      font-size: 2.5rem;
-      font-weight: bold;
-      color: #2ed573;
-      margin-top: 15px;
-    }
-    .sub-canvas {
-      margin-top: 10px;
-      border: 1px solid #555;
-    }
-  </style>
-</head>
-<body>
-
-  <h2>7セグメントOCR プロトタイプ</h2>
-  
-  <div class="container">
-    <video id="video" autoplay playsinline muted></video>
-    <!-- ユーザーに狙いを定めさせるための赤枠 -->
-    <div class="roi-box"></div>
-  </div>
-
-  <div class="result">
-    判定結果: <span id="digit-result">-</span>
-  </div>
-
-  <!-- デバッグ用：赤枠内を二値化（白黒）したリアルタイム画像 -->
-  <div>
-    <p style="font-size: 0.8rem; color: #aaa;">二値化プレビュー（デバッグ用）</p>
-    <canvas id="debug-canvas" width="120" height="200" class="sub-canvas"></canvas>
-  </div>
-
-  <!-- 非表示の作業用Canvas -->
-  <canvas id="process-canvas" style="display: none;"></canvas>
-
-  <script>
-    const video = document.getElementById('video');
-    const processCanvas = document.getElementById('process-canvas');
-    const debugCanvas = document.getElementById('debug-canvas');
-    const resultEl = document.getElementById('digit-result');
-
-    const pCtx = processCanvas.getContext('2d');
-    const dCtx = debugCanvas.getContext('2d');
-
-    // 赤枠のサイズ
-    const roiWidth = 120;
-    const roiHeight = 200;
-
-    // カメラの起動
-    async function startCamera() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false
-        });
-        video.srcObject = stream;
-        video.onloadedmetadata = () => {
-          processCanvas.width = video.videoWidth;
-          processCanvas.height = video.videoHeight;
-          requestAnimationFrame(processLoop);
-        };
-      } catch (err) {
-        alert('カメラの起動に失敗しました: ' + err);
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>非AI 高精度メーターOCR (記号・複数桁対応)</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        font-family: 'Segoe UI', sans-serif;
+        text-align: center;
+        background: #1e1e24;
+        color: #fff;
+        margin: 0;
+        padding: 10px;
       }
-    }
-
-    // 毎フレーム実行するメインループ
-    function processLoop() {
-      if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        // 1. 全体フレームをCanvasに描画
-        pCtx.drawImage(video, 0, 0, processCanvas.width, processCanvas.height);
-
-        // 2. 中央の赤枠（ROI）部分を切り出し
-        const startX = (processCanvas.width - roiWidth) / 2;
-        const startY = (processCanvas.height - roiHeight) / 2;
-        const imgData = pCtx.getImageData(startX, startY, roiWidth, roiHeight);
-
-        // 3. 画像の二値化（白黒化）とセグメント判定
-        const digit = process7Segment(imgData);
-
-        // 結果の表示
-        resultEl.innerText = digit !== null ? digit : '?';
+      h2 { margin: 8px 0; font-size: 1.1rem; color: #a4b0be; }
+      .container {
+        position: relative;
+        display: inline-block;
+        max-width: 100%;
       }
-      requestAnimationFrame(processLoop);
-    }
-
-    // 7セグメントの画像処理・判定ロジック
-    function process7Segment(imgData) {
-      const data = imgData.data;
-      const w = imgData.width;
-      const h = imgData.height;
-
-      // デバッグCanvas用ImageData
-      const debugData = dCtx.createImageData(w, h);
-
-      // A. グレースケール化 ＆ 白黒（二値化）処理
-      // 敷居値（2値化の基準値）。明るいデジタル数字（発光）を白(255)にする設定
-      const threshold = 130; 
-      const binaryMap = new Uint8Array(w * h);
-
-      for (let i = 0; i < data.length; i += 4) {
-        // 輝度の計算
-        const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
-        const isWhite = avg > threshold ? 1 : 0;
-        const idx = i / 4;
-        binaryMap[idx] = isWhite;
-
-        // デバッグ用表示画像の作成 (白黒)
-        const val = isWhite ? 255 : 0;
-        debugData.data[i] = val;     // R
-        debugData.data[i + 1] = val; // G
-        debugData.data[i + 2] = val; // B
-        debugData.data[i + 3] = 255; // A
+      video {
+        border-radius: 8px;
+        max-width: 100%;
+        height: auto;
+        display: block;
       }
-      dCtx.putImageData(debugData, 0, 0);
+      .guide-box {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 280px;
+        height: 120px;
+        transform: translate(-50%, -50%);
+        border: 2px dashed #00d2d3;
+        box-shadow: 0 0 10px rgba(0, 210, 211, 0.3);
+        pointer-events: none;
+      }
+      #status {
+        font-weight: bold;
+        color: #fca5a5;
+        margin: 10px 0;
+        min-height: 1.5em;
+      }
+      .result-box {
+        margin: 10px auto;
+        background: #2f3542;
+        padding: 10px 20px;
+        border-radius: 8px;
+        display: inline-block;
+        min-width: 250px;
+      }
+      .result-label {
+        font-size: 0.75rem;
+        color: #a4b0be;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      .result-val {
+        font-size: 2.8rem;
+        font-weight: bold;
+        color: #2ed573;
+        letter-spacing: 4px;
+        min-height: 3.5rem;
+        line-height: 1;
+      }
+      .debug-container {
+        display: flex;
+        justify-content: center;
+        gap: 12px;
+        margin-top: 10px;
+        flex-wrap: wrap;
+      }
+      .debug-item { font-size: 0.7rem; color: #aaa; }
+      canvas {
+        border: 1px solid #444;
+        background: #000;
+        border-radius: 4px;
+        display: block;
+        margin: 4px auto 0;
+      }
+      .confidence-bar {
+        width: 280px;
+        height: 6px;
+        background: #333;
+        border-radius: 3px;
+        margin: 4px auto;
+        overflow: hidden;
+      }
+      .confidence-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #ff6b6b, #ffd93d, #6bcb77);
+        border-radius: 3px;
+        transition: width 0.1s;
+        width: 0%;
+      }
+      #debug-log {
+        font-size: 0.65rem;
+        color: #636e72;
+        margin: 4px;
+        font-family: monospace;
+        min-height: 1em;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>高精度テキストOCR（記号・複数桁対応）</h2>
+    <div id="status">OpenCV.js を読み込み中...</div>
 
-      // B. 7つのエリア（セグメント A〜G）の点灯判定
-      // 各セグメントの相対位置エリア（x, y, width, height: 割合 0.0〜1.0）
-      const segments = {
-        A: { x: 0.2, y: 0.05, w: 0.6, h: 0.15 },
-        B: { x: 0.7, y: 0.15, w: 0.25, h: 0.35 },
-        C: { x: 0.7, y: 0.50, w: 0.25, h: 0.35 },
-        D: { x: 0.2, y: 0.80, w: 0.6, h: 0.15 },
-        E: { x: 0.05, y: 0.50, w: 0.25, h: 0.35 },
-        F: { x: 0.05, y: 0.15, w: 0.25, h: 0.35 },
-        G: { x: 0.2, y: 0.42, w: 0.6, h: 0.16 }
+    <div class="container">
+      <video id="video" autoplay playsinline muted></video>
+      <div class="guide-box"></div>
+    </div>
+
+    <div>
+      <div class="result-box">
+        <div class="result-label">READING RESULT</div>
+        <div class="result-val" id="text-result">-</div>
+      </div>
+      <div class="confidence-bar"><div class="confidence-fill" id="conf-fill"></div></div>
+      <div id="debug-log">待機中...</div>
+    </div>
+
+    <div class="debug-container">
+      <div class="debug-item">
+        グレースケール
+        <canvas id="canvas-gray" width="280" height="120"></canvas>
+      </div>
+      <div class="debug-item">
+        大津二値化
+        <canvas id="canvas-thresh" width="280" height="120"></canvas>
+      </div>
+      <div class="debug-item">
+        輪郭検出
+        <canvas id="canvas-contour" width="280" height="120"></canvas>
+      </div>
+    </div>
+
+    <!-- 処理用Canvas（非表示） -->
+    <canvas id="canvas-crop" style="display: none"></canvas>
+
+    <!--
+      【重要】Module を先に定義してから opencv.js を読み込む。
+      opencv.js は Module.onRuntimeInitialized を呼び出す仕様。
+      async を付けると Module の参照タイミングがずれてコールバックが発火しない。
+    -->
+    <script>
+      const video      = document.getElementById("video");
+      const statusEl   = document.getElementById("status");
+      const resultEl   = document.getElementById("text-result");
+      const confFill   = document.getElementById("conf-fill");
+      const debugLog   = document.getElementById("debug-log");
+
+      const canvasCrop    = document.getElementById("canvas-crop");
+      const canvasGray    = document.getElementById("canvas-gray");
+      const canvasThresh  = document.getElementById("canvas-thresh");
+      const canvasContour = document.getElementById("canvas-contour");
+
+      let isOpenCvReady = false;
+      let templates = {};
+
+      // opencv.js が参照する Module オブジェクト（先に定義必須）
+      var Module = {
+        onRuntimeInitialized: function () {
+          isOpenCvReady = true;
+          statusEl.innerText = "テンプレート生成中...";
+          generateTemplates();
+          statusEl.innerText = "OpenCV 準備完了！カメラを起動します...";
+          statusEl.style.color = "#86efac";
+          startCamera();
+        }
       };
+    </script>
 
-      const states = {};
-      for (const [key, rect] of Object.entries(segments)) {
-        states[key] = isAreaOn(binaryMap, w, h, rect);
+    <!-- Module定義の後に読み込む（asyncなし） -->
+    <script src="opencv.js"></script>
+
+    <script>
+      // =============================================
+      // テンプレート生成（0〜9 を Canvas で動的描画）
+      // =============================================
+      function generateTemplates() {
+        for (let i = 0; i <= 9; i++) {
+          const cvs = document.createElement("canvas");
+          cvs.width  = 60;
+          cvs.height = 100;
+          const ctx = cvs.getContext("2d");
+          ctx.fillStyle = "black";
+          ctx.fillRect(0, 0, 60, 100);
+          ctx.fillStyle = "white";
+          ctx.font = "bold 82px Arial";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(i.toString(), 30, 52);
+
+          const src  = cv.imread(cvs);
+          const gray = new cv.Mat();
+          cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+          templates[i] = gray;
+          src.delete();
+        }
+        debugLog.innerText = "テンプレート生成完了 (0〜9)";
       }
 
-      // C. ビットパターンを数字に変換
-      return decodeDigit(states);
-    }
-
-    // 指定領域内の「白ピクセル」の割合が閾値を超えているか判定
-    function isAreaOn(binaryMap, w, h, rect) {
-      const xStart = Math.floor(rect.x * w);
-      const yStart = Math.floor(rect.y * h);
-      const xEnd = Math.floor((rect.x + rect.w) * w);
-      const yEnd = Math.floor((rect.y + rect.h) * h);
-
-      let whiteCount = 0;
-      let totalCount = 0;
-
-      for (let y = yStart; y < yEnd; y++) {
-        for (let x = xStart; x < xEnd; x++) {
-          if (binaryMap[y * w + x] === 1) {
-            whiteCount++;
-          }
-          totalCount++;
+      // =============================================
+      // カメラ起動
+      // =============================================
+      async function startCamera() {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+            audio: false,
+          });
+          video.srcObject = stream;
+          video.onloadedmetadata = () => {
+            statusEl.style.display = "none";
+            requestAnimationFrame(processLoop);
+          };
+        } catch (err) {
+          statusEl.innerText = "カメラ起動失敗: " + err;
+          statusEl.style.color = "#fca5a5";
         }
       }
 
-      // 領域の 25% 以上が点灯（白）していれば「ON」とみなす
-      return (whiteCount / totalCount) > 0.25;
-    }
+      // =============================================
+      // メイン処理ループ
+      // =============================================
+      function processLoop() {
+        if (isOpenCvReady && video.readyState === video.HAVE_ENOUGH_DATA) {
+          try {
+            processFrame();
+          } catch (e) {
+            console.error("processFrame エラー:", e);
+            debugLog.innerText = "エラー: " + e.message;
+          }
+        }
+        requestAnimationFrame(processLoop);
+      }
 
-    // セグメントON/OFFの組み合わせから数字（0〜9）を判定
-    function decodeDigit(s) {
-      const patterns = {
-        '1111110': 0, // A,B,C,D,E,F
-        '0110000': 1, // B,C
-        '1101101': 2, // A,B,D,E,G
-        '1111001': 3, // A,B,C,D,G
-        '0110011': 4, // B,C,F,G
-        '1011011': 5, // A,C,D,F,G
-        '1011111': 6, // A,C,D,E,F,G
-        '1110000': 7, // A,B,C (またはA,B,C,F)
-        '1111111': 8, // 全てON
-        '1111011': 9  // A,B,C,D,F,G
-      };
+      // =============================================
+      // フレーム処理
+      // =============================================
+      function processFrame() {
+        const cropWidth  = 280;
+        const cropHeight = 120;
 
-      // A,B,C,D,E,F,G の順で1/0の文字列を作成
-      const key = `${s.A?1:0}${s.B?1:0}${s.C?1:0}${s.D?1:0}${s.E?1:0}${s.F?1:0}${s.G?1:0}`;
-      return patterns[key] !== undefined ? patterns[key] : null;
-    }
+        canvasCrop.width  = cropWidth;
+        canvasCrop.height = cropHeight;
+        const ctxCrop = canvasCrop.getContext("2d");
+        const startX  = (video.videoWidth  - cropWidth)  / 2;
+        const startY  = (video.videoHeight - cropHeight) / 2;
+        ctxCrop.drawImage(video, startX, startY, cropWidth, cropHeight,
+                                 0,      0,       cropWidth, cropHeight);
 
-    // 開始
-    startCamera();
-  </script>
-</body>
+        let src       = cv.imread(canvasCrop);
+        let gray      = new cv.Mat();
+        let blur      = new cv.Mat();
+        let thresh    = new cv.Mat();
+        let morphed   = new cv.Mat();
+        let contours  = new cv.MatVector();
+        let hierarchy = new cv.Mat();
+
+        // 1. グレースケール
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+        cv.imshow(canvasGray, gray);
+
+        // 2. ガウシアンブラー
+        cv.GaussianBlur(gray, blur, new cv.Size(3, 3), 0);
+
+        // 3. 大津法二値化（INV: 文字を白、背景を黒に）
+        cv.threshold(blur, thresh, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+
+        // 4. モーフォロジー・クロージングで輪郭補完
+        const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(2, 2));
+        cv.morphologyEx(thresh, morphed, cv.MORPH_CLOSE, kernel);
+        kernel.delete();
+        cv.imshow(canvasThresh, morphed);
+
+        // 5. 外部輪郭のみ検出
+        cv.findContours(morphed, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+        // 6. 輪郭デバッグ表示
+        let contourVis = cv.Mat.zeros(cropHeight, cropWidth, cv.CV_8UC3);
+        for (let i = 0; i < contours.size(); i++) {
+          cv.drawContours(contourVis, contours, i, new cv.Scalar(0, 255, 100, 255), 1);
+        }
+        cv.imshow(canvasContour, contourVis);
+        contourVis.delete();
+
+        // 7. 各輪郭を分類・認識
+        let detectedItems = [];
+        let totalConf = 0;
+        let digitCount = 0;
+
+        for (let i = 0; i < contours.size(); ++i) {
+          const cnt  = contours.get(i);
+          const rect = cv.boundingRect(cnt);
+          const area = rect.width * rect.height;
+          const ar   = rect.width / rect.height;
+          cnt.delete();
+
+          if (area < 80 || area > 15000) continue;
+
+          // 小数点 (.)
+          if (area < 400 && ar >= 0.5 && ar <= 2.0 && rect.y > cropHeight * 0.55) {
+            detectedItems.push({ x: rect.x, char: "." });
+          }
+          // 度記号 (°)
+          else if (area < 500 && ar >= 0.5 && ar <= 2.0 && rect.y < cropHeight * 0.4) {
+            detectedItems.push({ x: rect.x, char: "°" });
+          }
+          // マイナス (-)
+          else if (ar > 2.0 && rect.height < 22) {
+            detectedItems.push({ x: rect.x, char: "-" });
+          }
+          // 数字 (0〜9)
+          else if (rect.height >= 20 && ar >= 0.15 && ar <= 1.3) {
+            let digitMat = morphed.roi(rect);
+            let resized  = new cv.Mat();
+            cv.resize(digitMat, resized, new cv.Size(60, 100));
+
+            const { digit, conf } = matchDigit(resized);
+            if (digit !== null) {
+              detectedItems.push({ x: rect.x, char: digit.toString() });
+              totalConf += conf;
+              digitCount++;
+            }
+
+            digitMat.delete();
+            resized.delete();
+          }
+        }
+
+        // 8. X座標順にソートして文字列化
+        detectedItems.sort((a, b) => a.x - b.x);
+        const finalString = detectedItems.map(item => item.char).join("");
+        resultEl.innerText = finalString.length > 0 ? finalString : "-";
+
+        // 9. 信頼度バー更新
+        const avgConf = digitCount > 0 ? totalConf / digitCount : 0;
+        confFill.style.width = `${Math.round(avgConf * 100)}%`;
+        debugLog.innerText =
+          `輪郭数: ${contours.size()} | 採用: ${detectedItems.length}文字 | 信頼度: ${(avgConf * 100).toFixed(0)}%`;
+
+        // 10. メモリ解放
+        src.delete();
+        gray.delete();
+        blur.delete();
+        thresh.delete();
+        morphed.delete();
+        contours.delete();
+        hierarchy.delete();
+      }
+
+      // =============================================
+      // テンプレートマッチング
+      // =============================================
+      function matchDigit(digitMat) {
+        let bestDigit = null;
+        let maxVal    = -Infinity;
+
+        for (let i = 0; i <= 9; i++) {
+          const result = new cv.Mat();
+          // TM_CCOEFF_NORMED はマスク引数不要（省略することでエラー回避）
+          cv.matchTemplate(digitMat, templates[i], result, cv.TM_CCOEFF_NORMED);
+          const minMax = cv.minMaxLoc(result);
+          result.delete();
+
+          if (minMax.maxVal > maxVal) {
+            maxVal    = minMax.maxVal;
+            bestDigit = i;
+          }
+        }
+
+        return maxVal > 0.40
+          ? { digit: bestDigit, conf: maxVal }
+          : { digit: null,      conf: 0      };
+      }
+    </script>
+  </body>
 </html>
