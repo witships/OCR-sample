@@ -7,77 +7,81 @@
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
 
+      /* =============================================
+         スマホ1画面レイアウト
+         100dvh = ブラウザUIを除いた実際の画面高さ
+      ============================================= */
+      html, body {
+        height: 100%;
+        overflow: hidden; /* スクロール完全禁止 */
+      }
       body {
         font-family: 'Segoe UI', 'Helvetica Neue', sans-serif;
         background: #0f0f14;
         color: #e0e0e0;
-        min-height: 100vh;
+        height: 100dvh; /* Dynamic Viewport Height（アドレスバー考慮） */
         display: flex;
         flex-direction: column;
-        align-items: center;
-        padding: 16px 12px;
-        gap: 14px;
+        align-items: stretch;
+        overflow: hidden;
       }
 
-      header {
-        width: 100%;
-        max-width: 600px;
-        text-align: center;
-      }
-      header h1 {
-        font-size: 1rem;
-        color: #8899aa;
-        font-weight: 500;
-        letter-spacing: 0.05em;
-      }
-      header .badge {
-        display: inline-block;
-        background: #1e3a4a;
-        color: #4fc3f7;
-        font-size: 0.65rem;
-        padding: 2px 8px;
-        border-radius: 20px;
-        margin-top: 4px;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-
-      /* ステータスバー */
-      #status-bar {
-        width: 100%;
-        max-width: 600px;
-        background: #1a1a22;
-        border: 1px solid #2a2a38;
-        border-radius: 8px;
-        padding: 8px 14px;
+      /* ── ヘッダー（固定・極小） ── */
+      #app-header {
+        flex: 0 0 auto;
         display: flex;
         align-items: center;
-        gap: 10px;
-        font-size: 0.8rem;
+        justify-content: space-between;
+        padding: 6px 12px;
+        background: #13131a;
+        border-bottom: 1px solid #1e1e2e;
+        gap: 8px;
+      }
+      #app-header h1 {
+        font-size: 0.78rem;
+        color: #7788aa;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      .badge {
+        background: #1e3a4a;
+        color: #4fc3f7;
+        font-size: 0.6rem;
+        padding: 2px 7px;
+        border-radius: 20px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+      /* ステータス（ヘッダー右端） */
+      #status-bar {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 0.68rem;
+        color: #7788aa;
+        overflow: hidden;
       }
       .status-dot {
-        width: 8px;
-        height: 8px;
+        width: 7px; height: 7px;
         border-radius: 50%;
         background: #ff5555;
         flex-shrink: 0;
         transition: background 0.3s;
       }
-      .status-dot.ready   { background: #50fa7b; box-shadow: 0 0 6px #50fa7b88; }
+      .status-dot.ready   { background: #50fa7b; box-shadow: 0 0 5px #50fa7b88; }
       .status-dot.loading { background: #f1fa8c; animation: pulse 1s infinite; }
       .status-dot.busy    { background: #ffb86c; }
       @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-      #status-text { color: #aaa; flex: 1; }
+      #status-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
 
-      /* カメラ表示 */
+      /* ── カメラ（残り高さを全て使う） ── */
       .camera-wrapper {
+        flex: 1 1 0;
         position: relative;
-        width: 100%;
-        max-width: 600px;
-        border-radius: 12px;
         overflow: hidden;
         background: #000;
-        aspect-ratio: 16/9;
+        min-height: 0; /* flex縮小を許可 */
       }
       #video {
         width: 100%;
@@ -85,7 +89,6 @@
         object-fit: cover;
         display: block;
       }
-      /* ガイド枠（SVGオーバーレイ） */
       .guide-overlay {
         position: absolute;
         inset: 0;
@@ -100,220 +103,248 @@
       }
       .guide-label {
         position: absolute;
-        top: calc(50% - 70px);
         left: 50%;
         transform: translateX(-50%);
-        font-size: 0.6rem;
+        font-size: 0.58rem;
         color: #00d2d3cc;
         white-space: nowrap;
-        letter-spacing: 0.06em;
+        letter-spacing: 0.05em;
+        background: rgba(0,0,0,0.35);
+        padding: 1px 6px;
+        border-radius: 3px;
       }
 
-      /* 結果表示 */
+      /* ── 結果パネル（固定高さ） ── */
       .result-panel {
-        width: 100%;
-        max-width: 600px;
-        background: #1a1a22;
-        border: 1px solid #2a2a38;
-        border-radius: 12px;
-        padding: 14px 20px;
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 8px 14px;
+        background: #13131a;
+        border-top: 1px solid #1e1e2e;
       }
+      .result-left { flex: 1; min-width: 0; }
       .result-label {
-        font-size: 0.65rem;
-        color: #556677;
+        font-size: 0.6rem;
+        color: #445566;
         letter-spacing: 0.1em;
         text-transform: uppercase;
-        margin-bottom: 4px;
+        margin-bottom: 1px;
       }
       #text-result {
-        font-size: 3rem;
+        font-size: 2.2rem;
         font-weight: 700;
         color: #50fa7b;
-        letter-spacing: 0.08em;
-        line-height: 1.1;
-        min-height: 3.5rem;
-        word-break: break-all;
+        letter-spacing: 0.06em;
+        line-height: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
         transition: color 0.2s;
       }
       #text-result.low  { color: #ff5555; }
       #text-result.mid  { color: #ffb86c; }
       #text-result.high { color: #50fa7b; }
 
-      /* 信頼度 */
-      .conf-row {
+      /* 信頼度（右側縦配置） */
+      .result-right {
+        flex: 0 0 52px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 3px;
+      }
+      #conf-circle {
+        width: 44px; height: 44px;
+        border-radius: 50%;
+        border: 3px solid #2a2a38;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.65rem;
+        font-weight: 700;
+        color: #8899aa;
+        background: #0f0f14;
+        transition: border-color 0.2s, color 0.2s;
+      }
+      #conf-circle.low  { border-color: #ff5555; color: #ff5555; }
+      #conf-circle.mid  { border-color: #ffb86c; color: #ffb86c; }
+      #conf-circle.high { border-color: #50fa7b; color: #50fa7b; }
+      .conf-label-sm { font-size: 0.55rem; color: #445566; }
+
+      /* ── コントロールバー（最下部固定） ── */
+      .ctrl-bar {
+        flex: 0 0 auto;
         display: flex;
         align-items: center;
         gap: 8px;
-        margin-top: 8px;
+        padding: 6px 10px;
+        background: #0a0a10;
+        border-top: 1px solid #1a1a28;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
       }
-      .conf-label { font-size: 0.65rem; color: #556677; white-space: nowrap; }
-      .conf-track {
-        flex: 1;
-        height: 4px;
-        background: #2a2a38;
-        border-radius: 2px;
-        overflow: hidden;
+      .ctrl-bar::-webkit-scrollbar { display: none; }
+      .ctrl-item {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        flex-shrink: 0;
+        font-size: 0.68rem;
+        color: #6677aa;
+        white-space: nowrap;
       }
-      #conf-fill {
-        height: 100%;
-        border-radius: 2px;
-        transition: width 0.2s, background 0.2s;
-        width: 0%;
-        background: #ff5555;
+      .ctrl-item label { color: #556688; }
+      select, input[type=range] {
+        background: #13131a;
+        border: 1px solid #2a2a3a;
+        color: #bbc;
+        border-radius: 5px;
+        padding: 3px 6px;
+        font-size: 0.68rem;
       }
-      #conf-val {
-        font-size: 0.65rem;
-        color: #8899aa;
-        width: 32px;
-        text-align: right;
+      input[type=range] { width: 70px; cursor: pointer; }
+      .ctrl-divider {
+        width: 1px; height: 18px;
+        background: #2a2a3a;
+        flex-shrink: 0;
       }
 
-      /* デバッグプレビュー */
-      .debug-section {
-        width: 100%;
-        max-width: 600px;
+      /* ── デバッグ（折りたたみ式） ── */
+      details.debug-drawer {
+        flex: 0 0 auto;
+        background: #0a0a10;
+        border-top: 1px solid #1a1a28;
       }
-      .debug-title {
-        font-size: 0.65rem;
+      details.debug-drawer summary {
+        font-size: 0.62rem;
         color: #445566;
         letter-spacing: 0.08em;
         text-transform: uppercase;
-        margin-bottom: 6px;
-      }
-      .debug-row {
-        display: flex;
-        gap: 10px;
-        justify-content: center;
-        flex-wrap: wrap;
-      }
-      .debug-item {
-        text-align: center;
-        font-size: 0.62rem;
-        color: #556677;
-      }
-      .debug-item canvas {
-        border: 1px solid #2a2a38;
-        border-radius: 6px;
-        background: #000;
-        display: block;
-        margin-bottom: 3px;
-      }
-
-      /* コントロール */
-      .controls {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-        justify-content: center;
-        width: 100%;
-        max-width: 600px;
-      }
-      .ctrl-group {
-        background: #1a1a22;
-        border: 1px solid #2a2a38;
-        border-radius: 8px;
-        padding: 8px 12px;
-        font-size: 0.72rem;
+        padding: 5px 12px;
+        cursor: pointer;
+        list-style: none;
         display: flex;
         align-items: center;
+        gap: 6px;
+        user-select: none;
+      }
+      details.debug-drawer summary::before {
+        content: '▶';
+        font-size: 0.5rem;
+        transition: transform 0.2s;
+      }
+      details.debug-drawer[open] summary::before { transform: rotate(90deg); }
+      .debug-row {
+        display: flex;
         gap: 8px;
+        padding: 0 10px 8px;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
       }
-      .ctrl-group label { color: #7788aa; white-space: nowrap; }
-      select, input[type=range] {
-        background: #0f0f14;
-        border: 1px solid #3a3a50;
-        color: #ccc;
+      .debug-row::-webkit-scrollbar { display: none; }
+      .debug-item {
+        text-align: center;
+        font-size: 0.58rem;
+        color: #445566;
+        flex-shrink: 0;
+      }
+      .debug-item canvas {
+        border: 1px solid #1e1e2e;
         border-radius: 4px;
-        padding: 2px 6px;
-        font-size: 0.72rem;
+        background: #000;
+        display: block;
+        margin-bottom: 2px;
       }
-      input[type=range] { width: 80px; cursor: pointer; }
 
       /* 処理中スピナー */
       #spinner {
         display: none;
         position: fixed;
-        bottom: 20px;
-        right: 20px;
-        width: 28px;
-        height: 28px;
-        border: 3px solid #2a2a38;
+        bottom: 70px;
+        right: 14px;
+        width: 22px; height: 22px;
+        border: 3px solid #1e1e2e;
         border-top-color: #4fc3f7;
         border-radius: 50%;
         animation: spin 0.6s linear infinite;
+        z-index: 100;
       }
       @keyframes spin { to { transform: rotate(360deg); } }
     </style>
-  </head>
-  <body>
-    <header>
-      <h1>非AI テキスト OCR</h1>
-      <span class="badge">Tesseract.js — 従来型エンジン</span>
-    </header>
 
-    <!-- ステータス -->
-    <div id="status-bar">
-      <div class="status-dot loading" id="status-dot"></div>
-      <span id="status-text">Tesseract.js を読み込み中...</span>
+  </head>
+    <!-- ヘッダー -->
+    <div id="app-header">
+      <h1>非AI OCR <span class="badge">Tesseract.js</span></h1>
+      <div id="status-bar">
+        <div class="status-dot loading" id="status-dot"></div>
+        <span id="status-text">読み込み中...</span>
+      </div>
     </div>
 
-    <!-- カメラ -->
+    <!-- カメラ（画面の大部分を占める） -->
     <div class="camera-wrapper">
       <video id="video" autoplay playsinline muted></video>
-      <svg class="guide-overlay" id="guide-svg">
-        <!-- JS で動的にガイド枠を描画 -->
-      </svg>
+      <svg class="guide-overlay" id="guide-svg"></svg>
       <div class="guide-label" id="guide-label">◀ ここに数字を合わせてください ▶</div>
     </div>
 
-    <!-- 認識結果 -->
+    <!-- 認識結果パネル -->
     <div class="result-panel">
-      <div class="result-label">認識結果</div>
-      <div id="text-result">-</div>
-      <div class="conf-row">
-        <span class="conf-label">信頼度</span>
-        <div class="conf-track"><div id="conf-fill"></div></div>
-        <span id="conf-val">0%</span>
+      <div class="result-left">
+        <div class="result-label">認識結果</div>
+        <div id="text-result">-</div>
+      </div>
+      <div class="result-right">
+        <div id="conf-circle">0%</div>
+        <span class="conf-label-sm">信頼度</span>
       </div>
     </div>
 
-    <!-- コントロール -->
-    <div class="controls">
-      <div class="ctrl-group">
-        <label>解析間隔</label>
-        <input type="range" id="interval-slider" min="500" max="3000" step="500" value="1000" />
-        <span id="interval-val">1.0s</span>
-      </div>
-      <div class="ctrl-group">
-        <label>言語</label>
-        <select id="lang-select">
-          <option value="eng">英語 (数字・記号)</option>
-          <option value="jpn">日本語</option>
-        </select>
-      </div>
-      <div class="ctrl-group">
-        <label>ページモード</label>
-        <select id="psm-select">
-          <option value="7" selected>1行テキスト (推奨)</option>
-          <option value="6">ブロックテキスト</option>
-          <option value="8">単語</option>
-          <option value="13">生の行</option>
-        </select>
-      </div>
-    </div>
-
-    <!-- デバッグプレビュー -->
-    <div class="debug-section">
-      <div class="debug-title">デバッグプレビュー</div>
+    <!-- デバッグ（折りたたみ式 → 初期非表示） -->
+    <details class="debug-drawer">
+      <summary>デバッグプレビュー</summary>
       <div class="debug-row">
         <div class="debug-item">
-          <canvas id="canvas-crop" width="280" height="100"></canvas>
+          <canvas id="canvas-crop" width="200" height="72"></canvas>
           切り出し
         </div>
         <div class="debug-item">
-          <canvas id="canvas-gray" width="280" height="100"></canvas>
+          <canvas id="canvas-gray" width="200" height="72"></canvas>
           前処理済み
         </div>
+      </div>
+    </details>
+
+    <!-- コントロールバー（最下部固定） -->
+    <div class="ctrl-bar">
+      <div class="ctrl-item">
+        <label>間隔</label>
+        <input type="range" id="interval-slider" min="500" max="3000" step="500" value="1000" />
+        <span id="interval-val">1.0s</span>
+      </div>
+      <div class="ctrl-divider"></div>
+      <div class="ctrl-item">
+        <label>言語</label>
+        <select id="lang-select">
+          <option value="eng">英語</option>
+          <option value="jpn">日本語</option>
+        </select>
+      </div>
+      <div class="ctrl-divider"></div>
+      <div class="ctrl-item">
+        <label>モード</label>
+        <select id="psm-select">
+          <option value="7" selected>1行</option>
+          <option value="6">ブロック</option>
+          <option value="8">単語</option>
+          <option value="13">生の行</option>
+        </select>
       </div>
     </div>
 
@@ -330,8 +361,7 @@
       const statusDot   = document.getElementById("status-dot");
       const statusText  = document.getElementById("status-text");
       const resultEl    = document.getElementById("text-result");
-      const confFill    = document.getElementById("conf-fill");
-      const confVal     = document.getElementById("conf-val");
+      const confCircle  = document.getElementById("conf-circle");
       const spinner     = document.getElementById("spinner");
       const guideSvg    = document.getElementById("guide-svg");
       const canvasCrop  = document.getElementById("canvas-crop");
@@ -595,18 +625,9 @@
       // 信頼度表示更新
       // ==========================================
       function updateConf(conf) {
-        confFill.style.width = conf + "%";
-        confVal.innerText    = Math.round(conf) + "%";
-        if (conf >= 70) {
-          confFill.style.background = "#50fa7b";
-          resultEl.className = "high";
-        } else if (conf >= 40) {
-          confFill.style.background = "#ffb86c";
-          resultEl.className = "mid";
-        } else {
-          confFill.style.background = "#ff5555";
-          resultEl.className = "low";
-        }
+        confCircle.innerText = Math.round(conf) + "%";
+        confCircle.className = conf >= 70 ? "high" : conf >= 40 ? "mid" : "low";
+        resultEl.className   = conf >= 70 ? "high" : conf >= 40 ? "mid" : "low";
       }
 
       // ==========================================
