@@ -452,36 +452,32 @@
         spinner.style.display = "block";
         setStatus("busy", "解析中...");
 
-        // 1. ROI 切り出し
+        // 1. ROI 切り出し（元画像）
         const sx = (video.videoWidth  - ROI_W) / 2;
         const sy = (video.videoHeight - ROI_H) / 2;
         procCtx.drawImage(video, sx, sy, ROI_W, ROI_H, 0, 0, ROI_W, ROI_H);
 
-        // デバッグ: 切り出し表示
+        // デバッグ: 切り出し画像を表示
         canvasCrop.getContext("2d").drawImage(procCanvas, 0, 0);
 
-        // 2. 前処理（コントラスト強調 + グレースケール化）
-        const preprocessed = preprocess(procCtx, ROI_W, ROI_H);
-        const grayCtx = canvasGray.getContext("2d");
-        grayCtx.putImageData(preprocessed, 0, 0);
+        // 2. 前処理：3倍拡大 + 大津法二値化（Tesseractに最適な形式へ）
+        const tessCanvas = preprocessForTesseract(procCanvas);
 
-        // 3. 前処理済み Canvas を Blob 化して Tesseract に渡す
-        const tempCanvas = document.createElement("canvas");
-        tempCanvas.width  = ROI_W;
-        tempCanvas.height = ROI_H;
-        tempCanvas.getContext("2d").putImageData(preprocessed, 0, 0);
+        // デバッグ: Tesseractに渡す実際の画像を表示（縮小して表示）
+        const grayCtx = canvasGray.getContext("2d");
+        grayCtx.fillStyle = "#000";
+        grayCtx.fillRect(0, 0, canvasGray.width, canvasGray.height);
+        // tessCanvas は 3x なのでキャンバスに縮小描画
+        grayCtx.drawImage(tessCanvas, 0, 0, canvasGray.width, canvasGray.height);
 
         try {
           const psm = parseInt(psmSelect.value);
-          const result = await worker.recognize(tempCanvas, {
+          const result = await worker.recognize(tessCanvas, {
             tessedit_pageseg_mode: psm,
-            // 数値・記号のみ認識する文字セット（英語モード時）
-            tessedit_char_whitelist: workerLang === "eng"
-              ? "0123456789.-+°℃%ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-              : "",
+            // ホワイトリストは外す（制限しすぎると度記号など認識できなくなる）
           });
 
-          const text = result.data.text.trim().replace(/\n/g, " ");
+          const text = result.data.text.trim().replace(/\s+/g, " ");
           const conf = result.data.confidence; // 0〜100
 
           // 結果表示
@@ -499,41 +495,100 @@
       }
 
       // ==========================================
-      // 前処理：グレースケール化 + CLAHE風コントラスト強調
+      // 前処理：Tesseract用最適化
+      //   1. 3倍拡大（DPI相当を上げる）
+      //   2. グレースケール化
+      //   3. 大津法（Otsu）で自動二値化
+      //   4. 背景自動判定（白背景・黒文字に統一）
+      //   5. 白枠パディング（端の文字を保護）
       // ==========================================
-      function preprocess(srcCtx, w, h) {
-        const imgData = srcCtx.getImageData(0, 0, w, h);
-        const src  = imgData.data;
-        const out  = new Uint8ClampedArray(src.length);
+      function preprocessForTesseract(srcCanvas) {
+        const w = srcCanvas.width;
+        const h = srcCanvas.height;
+        const SCALE = 3;   // 3倍拡大（Tesseractの認識精度に直結）
+        const PAD   = 20;  // 白枠パディング（px）
 
-        // グレースケール化
-        const gray = new Uint8Array(w * h);
+        // ── Step 1: 3倍拡大 ──
+        const sw = w * SCALE;
+        const sh = h * SCALE;
+        const sc = document.createElement("canvas");
+        sc.width  = sw;
+        sc.height = sh;
+        const sCtx = sc.getContext("2d");
+        sCtx.imageSmoothingEnabled  = true;
+        sCtx.imageSmoothingQuality  = "high";
+        sCtx.drawImage(srcCanvas, 0, 0, sw, sh);
+
+        // ── Step 2: グレースケール化 ──
+        const imgData = sCtx.getImageData(0, 0, sw, sh);
+        const data = imgData.data;
+        const gray = new Uint8Array(sw * sh);
         for (let i = 0; i < gray.length; i++) {
-          const r = src[i * 4];
-          const g = src[i * 4 + 1];
-          const b = src[i * 4 + 2];
-          // 輝度重み付き平均（人間の視覚特性）
-          gray[i] = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+          gray[i] = Math.round(
+            0.299 * data[i * 4] +
+            0.587 * data[i * 4 + 1] +
+            0.114 * data[i * 4 + 2]
+          );
         }
 
-        // ヒストグラム平坦化（コントラスト強調）
+        // ── Step 3: 大津法で最適閾値を自動計算 ──
+        const thr = otsuThreshold(gray);
+
+        // ── Step 4: 背景色判定（白背景・黒文字に統一）──
+        // 閾値以下のピクセル（暗い）が50%超 → 背景が暗い → 反転して黒文字化
+        let darkCount = 0;
+        for (const v of gray) { if (v < thr) darkCount++; }
+        const invert = darkCount > gray.length * 0.5;
+
+        const binary = new Uint8ClampedArray(sw * sh * 4);
+        for (let i = 0; i < gray.length; i++) {
+          let isText = gray[i] < thr;   // 暗いピクセル = 文字
+          if (invert) isText = !isText; // 背景が暗い場合は反転
+          const val = isText ? 0 : 255; // 文字=黒(0), 背景=白(255)
+          binary[i * 4]     = val;
+          binary[i * 4 + 1] = val;
+          binary[i * 4 + 2] = val;
+          binary[i * 4 + 3] = 255;
+        }
+
+        // ── Step 5: 白枠パディングを追加 ──
+        const fw = sw + PAD * 2;
+        const fh = sh + PAD * 2;
+        const fc = document.createElement("canvas");
+        fc.width  = fw;
+        fc.height = fh;
+        const fCtx = fc.getContext("2d");
+        fCtx.fillStyle = "white";
+        fCtx.fillRect(0, 0, fw, fh);
+        fCtx.putImageData(new ImageData(binary, sw, sh), PAD, PAD);
+
+        return fc; // ← このCanvasをTesseractに渡す
+      }
+
+      // ==========================================
+      // 大津法（Otsu's Method）：最適閾値を自動計算
+      // ==========================================
+      function otsuThreshold(gray) {
         const hist = new Array(256).fill(0);
-        for (let i = 0; i < gray.length; i++) hist[gray[i]]++;
-        const cdf = new Array(256).fill(0);
-        cdf[0] = hist[0];
-        for (let i = 1; i < 256; i++) cdf[i] = cdf[i - 1] + hist[i];
-        const cdfMin = cdf.find(v => v > 0);
-        const total  = w * h;
+        for (const v of gray) hist[v]++;
+        const total = gray.length;
 
-        for (let i = 0; i < gray.length; i++) {
-          const eq = Math.round(((cdf[gray[i]] - cdfMin) / (total - cdfMin)) * 255);
-          out[i * 4]     = eq;
-          out[i * 4 + 1] = eq;
-          out[i * 4 + 2] = eq;
-          out[i * 4 + 3] = 255;
+        let sum = 0;
+        for (let i = 0; i < 256; i++) sum += i * hist[i];
+
+        let sumB = 0, wB = 0, maxVar = 0, threshold = 128;
+        for (let i = 0; i < 256; i++) {
+          wB += hist[i];
+          if (!wB) continue;
+          const wF = total - wB;
+          if (!wF) break;
+          sumB += i * hist[i];
+          const mB = sumB / wB;
+          const mF = (sum - sumB) / wF;
+          const between = wB * wF * (mB - mF) ** 2;
+          if (between > maxVar) { maxVar = between; threshold = i; }
         }
-
-        return new ImageData(out, w, h);
+        return threshold;
       }
 
       // ==========================================
