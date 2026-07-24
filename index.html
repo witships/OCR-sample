@@ -3,209 +3,401 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>非AI 高精度メーターOCR (記号・複数桁対応)</title>
+    <title>非AI 高精度テキストOCR (Tesseract.js)</title>
     <style>
-      * { box-sizing: border-box; }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+
       body {
-        font-family: 'Segoe UI', sans-serif;
+        font-family: 'Segoe UI', 'Helvetica Neue', sans-serif;
+        background: #0f0f14;
+        color: #e0e0e0;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 16px 12px;
+        gap: 14px;
+      }
+
+      header {
+        width: 100%;
+        max-width: 600px;
         text-align: center;
-        background: #1e1e24;
-        color: #fff;
-        margin: 0;
-        padding: 10px;
       }
-      h2 { margin: 8px 0; font-size: 1.1rem; color: #a4b0be; }
-      .container {
-        position: relative;
+      header h1 {
+        font-size: 1rem;
+        color: #8899aa;
+        font-weight: 500;
+        letter-spacing: 0.05em;
+      }
+      header .badge {
         display: inline-block;
-        max-width: 100%;
+        background: #1e3a4a;
+        color: #4fc3f7;
+        font-size: 0.65rem;
+        padding: 2px 8px;
+        border-radius: 20px;
+        margin-top: 4px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
       }
-      video {
+
+      /* ステータスバー */
+      #status-bar {
+        width: 100%;
+        max-width: 600px;
+        background: #1a1a22;
+        border: 1px solid #2a2a38;
         border-radius: 8px;
-        max-width: 100%;
-        height: auto;
+        padding: 8px 14px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 0.8rem;
+      }
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #ff5555;
+        flex-shrink: 0;
+        transition: background 0.3s;
+      }
+      .status-dot.ready   { background: #50fa7b; box-shadow: 0 0 6px #50fa7b88; }
+      .status-dot.loading { background: #f1fa8c; animation: pulse 1s infinite; }
+      .status-dot.busy    { background: #ffb86c; }
+      @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+      #status-text { color: #aaa; flex: 1; }
+
+      /* カメラ表示 */
+      .camera-wrapper {
+        position: relative;
+        width: 100%;
+        max-width: 600px;
+        border-radius: 12px;
+        overflow: hidden;
+        background: #000;
+        aspect-ratio: 16/9;
+      }
+      #video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
         display: block;
       }
-      .guide-box {
+      /* ガイド枠（SVGオーバーレイ） */
+      .guide-overlay {
         position: absolute;
-        top: 50%;
-        left: 50%;
-        width: 280px;
-        height: 120px;
-        transform: translate(-50%, -50%);
-        border: 2px dashed #00d2d3;
-        box-shadow: 0 0 10px rgba(0, 210, 211, 0.3);
+        inset: 0;
         pointer-events: none;
       }
-      #status {
-        font-weight: bold;
-        color: #fca5a5;
-        margin: 10px 0;
-        min-height: 1.5em;
+      .guide-overlay rect {
+        fill: none;
+        stroke: #00d2d3;
+        stroke-width: 2;
+        stroke-dasharray: 8 4;
+        opacity: 0.85;
       }
-      .result-box {
-        margin: 10px auto;
-        background: #2f3542;
-        padding: 10px 20px;
-        border-radius: 8px;
-        display: inline-block;
-        min-width: 250px;
+      .guide-label {
+        position: absolute;
+        top: calc(50% - 70px);
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 0.6rem;
+        color: #00d2d3cc;
+        white-space: nowrap;
+        letter-spacing: 0.06em;
+      }
+
+      /* 結果表示 */
+      .result-panel {
+        width: 100%;
+        max-width: 600px;
+        background: #1a1a22;
+        border: 1px solid #2a2a38;
+        border-radius: 12px;
+        padding: 14px 20px;
       }
       .result-label {
-        font-size: 0.75rem;
-        color: #a4b0be;
+        font-size: 0.65rem;
+        color: #556677;
+        letter-spacing: 0.1em;
         text-transform: uppercase;
-        letter-spacing: 1px;
+        margin-bottom: 4px;
       }
-      .result-val {
-        font-size: 2.8rem;
-        font-weight: bold;
-        color: #2ed573;
-        letter-spacing: 4px;
+      #text-result {
+        font-size: 3rem;
+        font-weight: 700;
+        color: #50fa7b;
+        letter-spacing: 0.08em;
+        line-height: 1.1;
         min-height: 3.5rem;
-        line-height: 1;
+        word-break: break-all;
+        transition: color 0.2s;
       }
-      .debug-container {
+      #text-result.low  { color: #ff5555; }
+      #text-result.mid  { color: #ffb86c; }
+      #text-result.high { color: #50fa7b; }
+
+      /* 信頼度 */
+      .conf-row {
         display: flex;
-        justify-content: center;
-        gap: 12px;
-        margin-top: 10px;
-        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        margin-top: 8px;
       }
-      .debug-item { font-size: 0.7rem; color: #aaa; }
-      canvas {
-        border: 1px solid #444;
-        background: #000;
-        border-radius: 4px;
-        display: block;
-        margin: 4px auto 0;
-      }
-      .confidence-bar {
-        width: 280px;
-        height: 6px;
-        background: #333;
-        border-radius: 3px;
-        margin: 4px auto;
+      .conf-label { font-size: 0.65rem; color: #556677; white-space: nowrap; }
+      .conf-track {
+        flex: 1;
+        height: 4px;
+        background: #2a2a38;
+        border-radius: 2px;
         overflow: hidden;
       }
-      .confidence-fill {
+      #conf-fill {
         height: 100%;
-        background: linear-gradient(90deg, #ff6b6b, #ffd93d, #6bcb77);
-        border-radius: 3px;
-        transition: width 0.1s;
+        border-radius: 2px;
+        transition: width 0.2s, background 0.2s;
         width: 0%;
+        background: #ff5555;
       }
-      #debug-log {
+      #conf-val {
         font-size: 0.65rem;
-        color: #636e72;
-        margin: 4px;
-        font-family: monospace;
-        min-height: 1em;
+        color: #8899aa;
+        width: 32px;
+        text-align: right;
       }
+
+      /* デバッグプレビュー */
+      .debug-section {
+        width: 100%;
+        max-width: 600px;
+      }
+      .debug-title {
+        font-size: 0.65rem;
+        color: #445566;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin-bottom: 6px;
+      }
+      .debug-row {
+        display: flex;
+        gap: 10px;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+      .debug-item {
+        text-align: center;
+        font-size: 0.62rem;
+        color: #556677;
+      }
+      .debug-item canvas {
+        border: 1px solid #2a2a38;
+        border-radius: 6px;
+        background: #000;
+        display: block;
+        margin-bottom: 3px;
+      }
+
+      /* コントロール */
+      .controls {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: center;
+        width: 100%;
+        max-width: 600px;
+      }
+      .ctrl-group {
+        background: #1a1a22;
+        border: 1px solid #2a2a38;
+        border-radius: 8px;
+        padding: 8px 12px;
+        font-size: 0.72rem;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .ctrl-group label { color: #7788aa; white-space: nowrap; }
+      select, input[type=range] {
+        background: #0f0f14;
+        border: 1px solid #3a3a50;
+        color: #ccc;
+        border-radius: 4px;
+        padding: 2px 6px;
+        font-size: 0.72rem;
+      }
+      input[type=range] { width: 80px; cursor: pointer; }
+
+      /* 処理中スピナー */
+      #spinner {
+        display: none;
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        width: 28px;
+        height: 28px;
+        border: 3px solid #2a2a38;
+        border-top-color: #4fc3f7;
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
     </style>
   </head>
   <body>
-    <h2>高精度テキストOCR（記号・複数桁対応）</h2>
-    <div id="status">OpenCV.js を読み込み中...</div>
+    <header>
+      <h1>非AI テキスト OCR</h1>
+      <span class="badge">Tesseract.js — 従来型エンジン</span>
+    </header>
 
-    <div class="container">
+    <!-- ステータス -->
+    <div id="status-bar">
+      <div class="status-dot loading" id="status-dot"></div>
+      <span id="status-text">Tesseract.js を読み込み中...</span>
+    </div>
+
+    <!-- カメラ -->
+    <div class="camera-wrapper">
       <video id="video" autoplay playsinline muted></video>
-      <div class="guide-box"></div>
+      <svg class="guide-overlay" id="guide-svg">
+        <!-- JS で動的にガイド枠を描画 -->
+      </svg>
+      <div class="guide-label" id="guide-label">◀ ここに数字を合わせてください ▶</div>
     </div>
 
-    <div>
-      <div class="result-box">
-        <div class="result-label">READING RESULT</div>
-        <div class="result-val" id="text-result">-</div>
-      </div>
-      <div class="confidence-bar"><div class="confidence-fill" id="conf-fill"></div></div>
-      <div id="debug-log">待機中...</div>
-    </div>
-
-    <div class="debug-container">
-      <div class="debug-item">
-        グレースケール
-        <canvas id="canvas-gray" width="280" height="120"></canvas>
-      </div>
-      <div class="debug-item">
-        大津二値化
-        <canvas id="canvas-thresh" width="280" height="120"></canvas>
-      </div>
-      <div class="debug-item">
-        輪郭検出
-        <canvas id="canvas-contour" width="280" height="120"></canvas>
+    <!-- 認識結果 -->
+    <div class="result-panel">
+      <div class="result-label">認識結果</div>
+      <div id="text-result">-</div>
+      <div class="conf-row">
+        <span class="conf-label">信頼度</span>
+        <div class="conf-track"><div id="conf-fill"></div></div>
+        <span id="conf-val">0%</span>
       </div>
     </div>
 
-    <!-- 処理用Canvas（非表示） -->
-    <canvas id="canvas-crop" style="display: none"></canvas>
+    <!-- コントロール -->
+    <div class="controls">
+      <div class="ctrl-group">
+        <label>解析間隔</label>
+        <input type="range" id="interval-slider" min="500" max="3000" step="500" value="1000" />
+        <span id="interval-val">1.0s</span>
+      </div>
+      <div class="ctrl-group">
+        <label>言語</label>
+        <select id="lang-select">
+          <option value="eng">英語 (数字・記号)</option>
+          <option value="jpn">日本語</option>
+        </select>
+      </div>
+      <div class="ctrl-group">
+        <label>ページモード</label>
+        <select id="psm-select">
+          <option value="7" selected>1行テキスト (推奨)</option>
+          <option value="6">ブロックテキスト</option>
+          <option value="8">単語</option>
+          <option value="13">生の行</option>
+        </select>
+      </div>
+    </div>
 
-    <!--
-      【重要】Module を先に定義してから opencv.js を読み込む。
-      opencv.js は Module.onRuntimeInitialized を呼び出す仕様。
-      async を付けると Module の参照タイミングがずれてコールバックが発火しない。
-    -->
-    <script>
-      const video      = document.getElementById("video");
-      const statusEl   = document.getElementById("status");
-      const resultEl   = document.getElementById("text-result");
-      const confFill   = document.getElementById("conf-fill");
-      const debugLog   = document.getElementById("debug-log");
+    <!-- デバッグプレビュー -->
+    <div class="debug-section">
+      <div class="debug-title">デバッグプレビュー</div>
+      <div class="debug-row">
+        <div class="debug-item">
+          <canvas id="canvas-crop" width="280" height="100"></canvas>
+          切り出し
+        </div>
+        <div class="debug-item">
+          <canvas id="canvas-gray" width="280" height="100"></canvas>
+          前処理済み
+        </div>
+      </div>
+    </div>
 
-      const canvasCrop    = document.getElementById("canvas-crop");
-      const canvasGray    = document.getElementById("canvas-gray");
-      const canvasThresh  = document.getElementById("canvas-thresh");
-      const canvasContour = document.getElementById("canvas-contour");
+    <div id="spinner"></div>
 
-      let isOpenCvReady = false;
-      let templates = {};
-
-      // opencv.js が参照する Module オブジェクト（先に定義必須）
-      var Module = {
-        onRuntimeInitialized: function () {
-          isOpenCvReady = true;
-          statusEl.innerText = "テンプレート生成中...";
-          generateTemplates();
-          statusEl.innerText = "OpenCV 準備完了！カメラを起動します...";
-          statusEl.style.color = "#86efac";
-          startCamera();
-        }
-      };
-    </script>
-
-    <!-- Module定義の後に読み込む（asyncなし） -->
-    <script src="opencv.js"></script>
+    <!-- Tesseract.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
     <script>
-      // =============================================
-      // テンプレート生成（0〜9 を Canvas で動的描画）
-      // =============================================
-      function generateTemplates() {
-        for (let i = 0; i <= 9; i++) {
-          const cvs = document.createElement("canvas");
-          cvs.width  = 60;
-          cvs.height = 100;
-          const ctx = cvs.getContext("2d");
-          ctx.fillStyle = "black";
-          ctx.fillRect(0, 0, 60, 100);
-          ctx.fillStyle = "white";
-          ctx.font = "bold 82px Arial";
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText(i.toString(), 30, 52);
+      // ==========================================
+      // DOM 参照
+      // ==========================================
+      const video       = document.getElementById("video");
+      const statusDot   = document.getElementById("status-dot");
+      const statusText  = document.getElementById("status-text");
+      const resultEl    = document.getElementById("text-result");
+      const confFill    = document.getElementById("conf-fill");
+      const confVal     = document.getElementById("conf-val");
+      const spinner     = document.getElementById("spinner");
+      const guideSvg    = document.getElementById("guide-svg");
+      const canvasCrop  = document.getElementById("canvas-crop");
+      const canvasGray  = document.getElementById("canvas-gray");
+      const intervalSlider = document.getElementById("interval-slider");
+      const intervalVal    = document.getElementById("interval-val");
+      const langSelect     = document.getElementById("lang-select");
+      const psmSelect      = document.getElementById("psm-select");
 
-          const src  = cv.imread(cvs);
-          const gray = new cv.Mat();
-          cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
-          templates[i] = gray;
-          src.delete();
+      // ROI サイズ（ガイド枠）
+      const ROI_W = 320;
+      const ROI_H = 100;
+
+      // 処理用 Canvas（非表示）
+      const procCanvas = document.createElement("canvas");
+      procCanvas.width  = ROI_W;
+      procCanvas.height = ROI_H;
+      const procCtx = procCanvas.getContext("2d");
+
+      // ==========================================
+      // 設定
+      // ==========================================
+      let analyzeInterval = 1000;
+      let isAnalyzing = false;
+      let worker = null;
+      let workerLang = "eng";
+
+      intervalSlider.addEventListener("input", () => {
+        analyzeInterval = parseInt(intervalSlider.value);
+        intervalVal.innerText = (analyzeInterval / 1000).toFixed(1) + "s";
+      });
+
+      // 言語変更時はワーカー再生成
+      langSelect.addEventListener("change", async () => {
+        if (worker) {
+          await worker.terminate();
+          worker = null;
         }
-        debugLog.innerText = "テンプレート生成完了 (0〜9)";
+        workerLang = langSelect.value;
+        setStatus("loading", `言語切替中 (${workerLang})...`);
+        await initWorker();
+      });
+
+      // ==========================================
+      // ステータス更新
+      // ==========================================
+      function setStatus(state, msg) {
+        statusDot.className = "status-dot " + state;
+        statusText.innerText = msg;
       }
 
-      // =============================================
+      // ==========================================
+      // Tesseract ワーカー初期化
+      // ==========================================
+      async function initWorker() {
+        setStatus("loading", "Tesseract ワーカーを初期化中...");
+        worker = await Tesseract.createWorker(workerLang, 1, {
+          logger: () => {} // 進捗ログ非表示
+        });
+        setStatus("ready", "Tesseract 準備完了");
+        startCamera();
+      }
+
+      // ==========================================
       // カメラ起動
-      // =============================================
+      // ==========================================
       async function startCamera() {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
@@ -214,169 +406,158 @@
           });
           video.srcObject = stream;
           video.onloadedmetadata = () => {
-            statusEl.style.display = "none";
-            requestAnimationFrame(processLoop);
+            drawGuide();
+            setStatus("ready", "カメラ起動完了 — 解析中...");
+            scheduleAnalyze();
           };
         } catch (err) {
-          statusEl.innerText = "カメラ起動失敗: " + err;
-          statusEl.style.color = "#fca5a5";
+          setStatus("", "カメラ起動失敗: " + err.message);
         }
       }
 
-      // =============================================
-      // メイン処理ループ
-      // =============================================
-      function processLoop() {
-        if (isOpenCvReady && video.readyState === video.HAVE_ENOUGH_DATA) {
-          try {
-            processFrame();
-          } catch (e) {
-            console.error("processFrame エラー:", e);
-            debugLog.innerText = "エラー: " + e.message;
-          }
-        }
-        requestAnimationFrame(processLoop);
+      // ==========================================
+      // SVG ガイド枠描画
+      // ==========================================
+      function drawGuide() {
+        const vw = video.offsetWidth  || 600;
+        const vh = video.offsetHeight || 337;
+        // ガイド枠中央に配置
+        const gx = (vw - ROI_W) / 2;
+        const gy = (vh - ROI_H) / 2;
+        guideSvg.innerHTML = `
+          <rect x="${gx}" y="${gy}" width="${ROI_W}" height="${ROI_H}" rx="4"/>
+        `;
+        document.getElementById("guide-label").style.top = (gy - 18) + "px";
       }
 
-      // =============================================
-      // フレーム処理
-      // =============================================
-      function processFrame() {
-        const cropWidth  = 280;
-        const cropHeight = 120;
-
-        canvasCrop.width  = cropWidth;
-        canvasCrop.height = cropHeight;
-        const ctxCrop = canvasCrop.getContext("2d");
-        const startX  = (video.videoWidth  - cropWidth)  / 2;
-        const startY  = (video.videoHeight - cropHeight) / 2;
-        ctxCrop.drawImage(video, startX, startY, cropWidth, cropHeight,
-                                 0,      0,       cropWidth, cropHeight);
-
-        let src       = cv.imread(canvasCrop);
-        let gray      = new cv.Mat();
-        let blur      = new cv.Mat();
-        let thresh    = new cv.Mat();
-        let morphed   = new cv.Mat();
-        let contours  = new cv.MatVector();
-        let hierarchy = new cv.Mat();
-
-        // 1. グレースケール
-        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
-        cv.imshow(canvasGray, gray);
-
-        // 2. ガウシアンブラー
-        cv.GaussianBlur(gray, blur, new cv.Size(3, 3), 0);
-
-        // 3. 大津法二値化（INV: 文字を白、背景を黒に）
-        cv.threshold(blur, thresh, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-
-        // 4. モーフォロジー・クロージングで輪郭補完
-        const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(2, 2));
-        cv.morphologyEx(thresh, morphed, cv.MORPH_CLOSE, kernel);
-        kernel.delete();
-        cv.imshow(canvasThresh, morphed);
-
-        // 5. 外部輪郭のみ検出
-        cv.findContours(morphed, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-        // 6. 輪郭デバッグ表示
-        let contourVis = cv.Mat.zeros(cropHeight, cropWidth, cv.CV_8UC3);
-        for (let i = 0; i < contours.size(); i++) {
-          cv.drawContours(contourVis, contours, i, new cv.Scalar(0, 255, 100, 255), 1);
-        }
-        cv.imshow(canvasContour, contourVis);
-        contourVis.delete();
-
-        // 7. 各輪郭を分類・認識
-        let detectedItems = [];
-        let totalConf = 0;
-        let digitCount = 0;
-
-        for (let i = 0; i < contours.size(); ++i) {
-          const cnt  = contours.get(i);
-          const rect = cv.boundingRect(cnt);
-          const area = rect.width * rect.height;
-          const ar   = rect.width / rect.height;
-          cnt.delete();
-
-          if (area < 80 || area > 15000) continue;
-
-          // 小数点 (.)
-          if (area < 400 && ar >= 0.5 && ar <= 2.0 && rect.y > cropHeight * 0.55) {
-            detectedItems.push({ x: rect.x, char: "." });
+      // ==========================================
+      // 解析スケジューラ
+      // ==========================================
+      function scheduleAnalyze() {
+        setTimeout(async () => {
+          if (!isAnalyzing) {
+            await analyzeFrame();
           }
-          // 度記号 (°)
-          else if (area < 500 && ar >= 0.5 && ar <= 2.0 && rect.y < cropHeight * 0.4) {
-            detectedItems.push({ x: rect.x, char: "°" });
-          }
-          // マイナス (-)
-          else if (ar > 2.0 && rect.height < 22) {
-            detectedItems.push({ x: rect.x, char: "-" });
-          }
-          // 数字 (0〜9)
-          else if (rect.height >= 20 && ar >= 0.15 && ar <= 1.3) {
-            let digitMat = morphed.roi(rect);
-            let resized  = new cv.Mat();
-            cv.resize(digitMat, resized, new cv.Size(60, 100));
-
-            const { digit, conf } = matchDigit(resized);
-            if (digit !== null) {
-              detectedItems.push({ x: rect.x, char: digit.toString() });
-              totalConf += conf;
-              digitCount++;
-            }
-
-            digitMat.delete();
-            resized.delete();
-          }
-        }
-
-        // 8. X座標順にソートして文字列化
-        detectedItems.sort((a, b) => a.x - b.x);
-        const finalString = detectedItems.map(item => item.char).join("");
-        resultEl.innerText = finalString.length > 0 ? finalString : "-";
-
-        // 9. 信頼度バー更新
-        const avgConf = digitCount > 0 ? totalConf / digitCount : 0;
-        confFill.style.width = `${Math.round(avgConf * 100)}%`;
-        debugLog.innerText =
-          `輪郭数: ${contours.size()} | 採用: ${detectedItems.length}文字 | 信頼度: ${(avgConf * 100).toFixed(0)}%`;
-
-        // 10. メモリ解放
-        src.delete();
-        gray.delete();
-        blur.delete();
-        thresh.delete();
-        morphed.delete();
-        contours.delete();
-        hierarchy.delete();
+          scheduleAnalyze();
+        }, analyzeInterval);
       }
 
-      // =============================================
-      // テンプレートマッチング
-      // =============================================
-      function matchDigit(digitMat) {
-        let bestDigit = null;
-        let maxVal    = -Infinity;
+      // ==========================================
+      // フレーム解析（前処理 + Tesseract）
+      // ==========================================
+      async function analyzeFrame() {
+        if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
 
-        for (let i = 0; i <= 9; i++) {
-          const result = new cv.Mat();
-          // TM_CCOEFF_NORMED はマスク引数不要（省略することでエラー回避）
-          cv.matchTemplate(digitMat, templates[i], result, cv.TM_CCOEFF_NORMED);
-          const minMax = cv.minMaxLoc(result);
-          result.delete();
+        isAnalyzing = true;
+        spinner.style.display = "block";
+        setStatus("busy", "解析中...");
 
-          if (minMax.maxVal > maxVal) {
-            maxVal    = minMax.maxVal;
-            bestDigit = i;
-          }
+        // 1. ROI 切り出し
+        const sx = (video.videoWidth  - ROI_W) / 2;
+        const sy = (video.videoHeight - ROI_H) / 2;
+        procCtx.drawImage(video, sx, sy, ROI_W, ROI_H, 0, 0, ROI_W, ROI_H);
+
+        // デバッグ: 切り出し表示
+        canvasCrop.getContext("2d").drawImage(procCanvas, 0, 0);
+
+        // 2. 前処理（コントラスト強調 + グレースケール化）
+        const preprocessed = preprocess(procCtx, ROI_W, ROI_H);
+        const grayCtx = canvasGray.getContext("2d");
+        grayCtx.putImageData(preprocessed, 0, 0);
+
+        // 3. 前処理済み Canvas を Blob 化して Tesseract に渡す
+        const tempCanvas = document.createElement("canvas");
+        tempCanvas.width  = ROI_W;
+        tempCanvas.height = ROI_H;
+        tempCanvas.getContext("2d").putImageData(preprocessed, 0, 0);
+
+        try {
+          const psm = parseInt(psmSelect.value);
+          const result = await worker.recognize(tempCanvas, {
+            tessedit_pageseg_mode: psm,
+            // 数値・記号のみ認識する文字セット（英語モード時）
+            tessedit_char_whitelist: workerLang === "eng"
+              ? "0123456789.-+°℃%ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+              : "",
+          });
+
+          const text = result.data.text.trim().replace(/\n/g, " ");
+          const conf = result.data.confidence; // 0〜100
+
+          // 結果表示
+          resultEl.innerText = text.length > 0 ? text : "（認識不可）";
+          updateConf(conf);
+
+        } catch (err) {
+          console.error("Tesseract エラー:", err);
+          resultEl.innerText = "エラー";
         }
 
-        return maxVal > 0.40
-          ? { digit: bestDigit, conf: maxVal }
-          : { digit: null,      conf: 0      };
+        setStatus("ready", "待機中 — 次の解析まで " + (analyzeInterval / 1000).toFixed(1) + "s");
+        spinner.style.display = "none";
+        isAnalyzing = false;
       }
+
+      // ==========================================
+      // 前処理：グレースケール化 + CLAHE風コントラスト強調
+      // ==========================================
+      function preprocess(srcCtx, w, h) {
+        const imgData = srcCtx.getImageData(0, 0, w, h);
+        const src  = imgData.data;
+        const out  = new Uint8ClampedArray(src.length);
+
+        // グレースケール化
+        const gray = new Uint8Array(w * h);
+        for (let i = 0; i < gray.length; i++) {
+          const r = src[i * 4];
+          const g = src[i * 4 + 1];
+          const b = src[i * 4 + 2];
+          // 輝度重み付き平均（人間の視覚特性）
+          gray[i] = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+        }
+
+        // ヒストグラム平坦化（コントラスト強調）
+        const hist = new Array(256).fill(0);
+        for (let i = 0; i < gray.length; i++) hist[gray[i]]++;
+        const cdf = new Array(256).fill(0);
+        cdf[0] = hist[0];
+        for (let i = 1; i < 256; i++) cdf[i] = cdf[i - 1] + hist[i];
+        const cdfMin = cdf.find(v => v > 0);
+        const total  = w * h;
+
+        for (let i = 0; i < gray.length; i++) {
+          const eq = Math.round(((cdf[gray[i]] - cdfMin) / (total - cdfMin)) * 255);
+          out[i * 4]     = eq;
+          out[i * 4 + 1] = eq;
+          out[i * 4 + 2] = eq;
+          out[i * 4 + 3] = 255;
+        }
+
+        return new ImageData(out, w, h);
+      }
+
+      // ==========================================
+      // 信頼度表示更新
+      // ==========================================
+      function updateConf(conf) {
+        confFill.style.width = conf + "%";
+        confVal.innerText    = Math.round(conf) + "%";
+        if (conf >= 70) {
+          confFill.style.background = "#50fa7b";
+          resultEl.className = "high";
+        } else if (conf >= 40) {
+          confFill.style.background = "#ffb86c";
+          resultEl.className = "mid";
+        } else {
+          confFill.style.background = "#ff5555";
+          resultEl.className = "low";
+        }
+      }
+
+      // ==========================================
+      // 起動
+      // ==========================================
+      initWorker();
     </script>
   </body>
 </html>
